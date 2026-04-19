@@ -1,0 +1,988 @@
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+
+import javax.sound.sampled.*;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.plaf.basic.BasicComboBoxUI;
+import javax.swing.plaf.basic.BasicScrollBarUI;
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.geom.RoundRectangle2D;
+import java.io.*;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.List;
+import javax.swing.Timer;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+/**
+ * QUEUECARE: Digital Queue & Service Management System
+ * Team: Calimlim, Coral, Gallardo, Labayog, Maneclang
+ */
+public class QueueCare extends JFrame {
+
+    // storing our queues and current ticket states in memory
+    private static final Map<String, Queue<Integer>> queues = new ConcurrentHashMap<>();
+    private static final Map<String, Integer> counters = new ConcurrentHashMap<>();
+    private static final Map<String, String> currentServing = new ConcurrentHashMap<>();
+    private static final List<String> historyLog = Collections.synchronizedList(new ArrayList<>());
+
+    // basic security to stop spamming, and a txt file to save data if app crashes
+    private static final Map<String, Long> ipCooldowns = new ConcurrentHashMap<>();
+    private static final String BACKUP_FILE = "QueueCare_Backup.txt";
+
+    // vars for the analytics dashboard calculations
+    private static final Map<String, Long> ticketTimestamps = new ConcurrentHashMap<>();
+    private static final Map<String, Integer> categoryServedToday = new ConcurrentHashMap<>();
+    private static final Map<String, Long> categoryWaitTimeMillis = new ConcurrentHashMap<>();
+    private static int totalServedToday = 0;
+    private static long totalWaitTimeMillis = 0;
+
+    // media stuff for the TV display and audio announcer
+    private static String mediaFilePath = "";
+    private static String mediaType = "";
+    private static final Map<String, String> customSounds = new ConcurrentHashMap<>();
+    private JComboBox<MixerItem> audioDeviceDropdown;
+
+    // UI stuff
+    private DefaultListModel<String> historyModel;
+    private static final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
+    private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+    private CardLayout cardLayout;
+    private JPanel mainContentPanel;
+    private SidebarButton btnNavDashboard, btnNavSettings, btnNavAnalytics;
+    private JLabel lblTotalServed, lblAvgWaitTime;
+
+    // Custom colors for our dark theme
+    private static final Color BG_MAIN = new Color(15, 23, 42);
+    private static final Color BG_SIDEBAR = new Color(9, 14, 23);
+    private static final Color PANEL_BG = new Color(30, 41, 59);
+    private static final Color ACCENT_BLUE = new Color(56, 189, 248);
+    private static final Color ACCENT_GREEN = new Color(16, 185, 129);
+    private static final Color ACCENT_ORANGE = new Color(245, 158, 11);
+    private static final Color ACCENT_PURPLE = new Color(168, 85, 247);
+    private static final Color ADMIN_RED = new Color(239, 68, 68);
+    private static final Color TEXT_MUTED = new Color(148, 163, 184);
+
+    // main constructor. sets up the whole desktop app interface
+    public QueueCare() {
+        // init the 3 main departments
+        String[] categories = {"Payments", "Registration", "Consultation"};
+        for (String cat : categories) {
+            queues.put(cat, new ConcurrentLinkedQueue<>());
+            counters.put(cat, 1);
+            currentServing.put(cat, "--");
+            customSounds.put(cat, "");
+            categoryServedToday.put(cat, 0);
+            categoryWaitTimeMillis.put(cat, 0L);
+        }
+
+        loadCounterState(); // try to load last saved numbers
+
+        setTitle("QueueCare Admin Dashboard");
+        setSize(1200, 800);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+        System.setProperty("sun.java2d.opengl", "true");
+
+        JPanel rootPanel = new JPanel(new BorderLayout());
+        rootPanel.setBackground(BG_MAIN);
+
+        // building the left sidebar
+        JPanel sidebar = new JPanel(new BorderLayout());
+        sidebar.setBackground(BG_SIDEBAR);
+        sidebar.setPreferredSize(new Dimension(280, 0));
+        sidebar.setBorder(new EmptyBorder(35, 20, 30, 20));
+
+        JPanel brandPanel = new JPanel(new GridLayout(2, 1));
+        brandPanel.setOpaque(false);
+        JLabel brand = new JLabel("<html>Queue<font color='#EF4444'>Care</font></html>", SwingConstants.LEFT);
+        brand.setFont(new Font("Segoe UI", Font.BOLD, 36));
+        brand.setForeground(Color.WHITE);
+        JLabel subtitle = new JLabel("Admin Control Center", SwingConstants.LEFT);
+        subtitle.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        subtitle.setForeground(ACCENT_BLUE);
+        brandPanel.add(brand); brandPanel.add(subtitle);
+        sidebar.add(brandPanel, BorderLayout.NORTH);
+
+        // nav menu buttons
+        JPanel navPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 15));
+        navPanel.setOpaque(false);
+        navPanel.setBorder(new EmptyBorder(50, 0, 0, 0));
+
+        btnNavDashboard = new SidebarButton("Dashboard", true);
+        btnNavAnalytics = new SidebarButton("Data Analytics", false);
+        btnNavSettings = new SidebarButton("Settings", false);
+
+        btnNavDashboard.addActionListener(e -> switchTab("Dashboard", btnNavDashboard));
+        btnNavAnalytics.addActionListener(e -> switchTab("Analytics", btnNavAnalytics));
+        btnNavSettings.addActionListener(e -> switchTab("Settings", btnNavSettings));
+
+        navPanel.add(btnNavDashboard);
+        navPanel.add(btnNavAnalytics);
+        navPanel.add(btnNavSettings);
+        sidebar.add(navPanel, BorderLayout.CENTER);
+
+        // bottom of sidebar info (team members and ip address)
+        JPanel footerPanel = new JPanel(new GridLayout(2, 1));
+        footerPanel.setOpaque(false);
+        JLabel teamLabel = new JLabel("<html><b>Team:</b><br>Calimlim, Coral, Gallardo,<br>Labayog, Maneclang</html>");
+        teamLabel.setForeground(TEXT_MUTED);
+        teamLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+
+        String myIP = "localhost";
+        try { myIP = InetAddress.getLocalHost().getHostAddress(); } catch (Exception ignored) {}
+        JLabel ipLabel = new JLabel("<html><br><b>Client Portal:</b><br><font color='#10B981'>http://" + myIP + ":8080/portal</font></html>");
+        ipLabel.setForeground(TEXT_MUTED);
+        ipLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+
+        footerPanel.add(teamLabel); footerPanel.add(ipLabel);
+        sidebar.add(footerPanel, BorderLayout.SOUTH);
+        rootPanel.add(sidebar, BorderLayout.WEST);
+
+        // right side content area using card layout to swap pages
+        cardLayout = new CardLayout();
+        mainContentPanel = new JPanel(cardLayout);
+        mainContentPanel.setOpaque(false);
+        mainContentPanel.setBorder(new EmptyBorder(30, 40, 30, 40));
+
+        mainContentPanel.add(buildDashboardPanel(), "Dashboard");
+        mainContentPanel.add(buildAnalyticsPanel(), "Analytics");
+        mainContentPanel.add(buildSettingsPanel(), "Settings");
+
+        rootPanel.add(mainContentPanel, BorderLayout.CENTER);
+        setContentPane(rootPanel);
+    }
+
+    // helper function to switch between the 3 main views
+    private void switchTab(String tabName, SidebarButton activeBtn) {
+        cardLayout.show(mainContentPanel, tabName);
+        btnNavDashboard.setActive(false);
+        btnNavAnalytics.setActive(false);
+        btnNavSettings.setActive(false);
+        activeBtn.setActive(true);
+    }
+
+    // writes current numbers to a txt file. just a failsafe so we don't start at 0 if closed
+    private static void saveCounterState() {
+        try {
+            PrintWriter writer = new PrintWriter(BACKUP_FILE, "UTF-8");
+            writer.println(counters.get("Payments"));
+            writer.println(counters.get("Registration"));
+            writer.println(counters.get("Consultation"));
+            writer.close();
+        } catch (Exception e) { System.out.println("Failed to save state."); }
+    }
+
+    // reads the txt file on startup to restore ticket numbers
+    private static void loadCounterState() {
+        try {
+            File backup = new File(BACKUP_FILE);
+            if (backup.exists()) {
+                Scanner scanner = new Scanner(backup);
+                if(scanner.hasNextLine()) counters.put("Payments", Integer.parseInt(scanner.nextLine().trim()));
+                if(scanner.hasNextLine()) counters.put("Registration", Integer.parseInt(scanner.nextLine().trim()));
+                if(scanner.hasNextLine()) counters.put("Consultation", Integer.parseInt(scanner.nextLine().trim()));
+                scanner.close();
+            }
+        } catch (Exception e) { System.out.println("Failed to load state. Starting at 001."); }
+    }
+
+    // core logic: makes a new ticket, increments counter, adds to line, and logs the time
+    public static synchronized String generateNextTicket(String category) {
+        int num = counters.get(category);
+        queues.get(category).add(num);
+        counters.put(category, num + 1);
+
+        saveCounterState();
+
+        String prefix = category.substring(0, 1).toUpperCase();
+        String ticket = prefix + "-" + String.format("%03d", num);
+        ticketTimestamps.put(ticket, System.currentTimeMillis());
+        return ticket;
+    }
+
+    // builds the main screen with the call buttons and live history log
+    private JPanel buildDashboardPanel() {
+        JPanel dash = new JPanel(new BorderLayout(0, 25));
+        dash.setOpaque(false);
+
+        JLabel header = new JLabel("Live Queue Management");
+        header.setFont(new Font("Segoe UI", Font.BOLD, 30));
+        header.setForeground(Color.WHITE);
+        dash.add(header, BorderLayout.NORTH);
+
+        JPanel centerSplit = new JPanel(new GridLayout(2, 1, 0, 25));
+        centerSplit.setOpaque(false);
+
+        RoundedPanel controls = new RoundedPanel(20, PANEL_BG);
+        controls.setLayout(new GridLayout(3, 1, 0, 10));
+        controls.setBorder(new EmptyBorder(20, 25, 20, 25));
+        controls.add(createControlRow("Payments", "P"));
+        controls.add(createControlRow("Registration", "R"));
+        controls.add(createControlRow("Consultation", "C"));
+        centerSplit.add(controls);
+
+        RoundedPanel historyWrapper = new RoundedPanel(20, PANEL_BG);
+        historyWrapper.setLayout(new BorderLayout(0, 15));
+        historyWrapper.setBorder(new EmptyBorder(20, 25, 20, 25));
+        JLabel historyTitle = new JLabel("Activity Log");
+        historyTitle.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        historyTitle.setForeground(Color.WHITE);
+        historyWrapper.add(historyTitle, BorderLayout.NORTH);
+
+        historyModel = new DefaultListModel<>();
+        JList<String> historyList = new JList<>(historyModel);
+        historyList.setFont(new Font("Consolas", Font.BOLD, 15));
+        historyList.setBackground(BG_MAIN);
+        historyList.setForeground(ACCENT_GREEN);
+        historyList.setBorder(new EmptyBorder(15, 15, 15, 15));
+        JScrollPane scrollPane = new JScrollPane(historyList);
+        scrollPane.setBorder(BorderFactory.createLineBorder(new Color(255, 255, 255, 15)));
+        scrollPane.getVerticalScrollBar().setUI(new BasicScrollBarUI() {
+            @Override protected void configureScrollBarColors() { this.thumbColor = new Color(255,255,255,40); }
+        });
+        historyWrapper.add(scrollPane, BorderLayout.CENTER);
+
+        centerSplit.add(historyWrapper);
+        dash.add(centerSplit, BorderLayout.CENTER);
+        return dash;
+    }
+
+    // helper to make the 3 rows in the dashboard for each department
+    private JPanel createControlRow(String category, String prefix) {
+        JPanel row = new JPanel(new BorderLayout());
+        row.setOpaque(false);
+        row.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(255, 255, 255, 15)));
+
+        JLabel catLabel = new JLabel(category);
+        catLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        catLabel.setForeground(Color.WHITE);
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 10));
+        btnPanel.setOpaque(false);
+
+        StyledButton btnGen = new StyledButton("Generate", ACCENT_GREEN);
+        StyledButton btnNext = new StyledButton("Call Next", ACCENT_ORANGE);
+
+        // local admin gen button action
+        btnGen.addActionListener(e -> {
+            String tkt = generateNextTicket(category);
+            showToast("Generated " + tkt, ACCENT_GREEN);
+        });
+
+        // call next button action: pops queue, updates analytics, plays sound
+        btnNext.addActionListener(e -> {
+            Queue<Integer> q = queues.get(category);
+            if (q.isEmpty()) {
+                showToast("Queue is empty!", ADMIN_RED);
+            } else {
+                btnNext.setEnabled(false);
+                Timer cooldown = new Timer(1500, evt -> btnNext.setEnabled(true));
+                cooldown.setRepeats(false); cooldown.start(); // 1.5s delay to stop spam clicking
+
+                int nextNum = q.poll();
+                String tkt = prefix + "-" + String.format("%03d", nextNum);
+                currentServing.put(category, tkt);
+
+                if (ticketTimestamps.containsKey(tkt)) {
+                    long waitTime = System.currentTimeMillis() - ticketTimestamps.get(tkt);
+                    totalWaitTimeMillis += waitTime;
+                    totalServedToday++;
+
+                    categoryWaitTimeMillis.put(category, categoryWaitTimeMillis.get(category) + waitTime);
+                    categoryServedToday.put(category, categoryServedToday.get(category) + 1);
+                    updateAnalyticsUI();
+                }
+
+                String time = timeFormat.format(new Date());
+                String log = "[" + time + "] " + category + " called " + tkt;
+                historyLog.add(log);
+                historyModel.add(0, log);
+                playAnnouncement(category, tkt);
+            }
+        });
+
+        btnPanel.add(btnGen); btnPanel.add(btnNext);
+        row.add(catLabel, BorderLayout.WEST); row.add(btnPanel, BorderLayout.EAST);
+        return row;
+    }
+
+    // builds the screen showing total served and avg wait times
+    private JPanel buildAnalyticsPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 25));
+        panel.setOpaque(false);
+
+        JLabel header = new JLabel("System Analytics & Reports");
+        header.setFont(new Font("Segoe UI", Font.BOLD, 30));
+        header.setForeground(Color.WHITE);
+        panel.add(header, BorderLayout.NORTH);
+
+        JPanel metricsGrid = new JPanel(new GridLayout(1, 2, 20, 0));
+        metricsGrid.setOpaque(false);
+        metricsGrid.setPreferredSize(new Dimension(0, 150));
+
+        RoundedPanel card1 = new RoundedPanel(20, PANEL_BG);
+        card1.setLayout(new GridBagLayout());
+        lblTotalServed = new JLabel("0");
+        lblTotalServed.setFont(new Font("Segoe UI", Font.BOLD, 48));
+        lblTotalServed.setForeground(ACCENT_BLUE);
+        JLabel title1 = new JLabel("Total Customers Served");
+        title1.setForeground(Color.WHITE); title1.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridy=0; card1.add(lblTotalServed, gbc);
+        gbc.gridy=1; card1.add(title1, gbc);
+
+        RoundedPanel card2 = new RoundedPanel(20, PANEL_BG);
+        card2.setLayout(new GridBagLayout());
+        lblAvgWaitTime = new JLabel("0m 0s");
+        lblAvgWaitTime.setFont(new Font("Segoe UI", Font.BOLD, 48));
+        lblAvgWaitTime.setForeground(ACCENT_PURPLE);
+        JLabel title2 = new JLabel("Average Wait Time");
+        title2.setForeground(Color.WHITE); title2.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        gbc.gridy=0; card2.add(lblAvgWaitTime, gbc);
+        gbc.gridy=1; card2.add(title2, gbc);
+
+        metricsGrid.add(card1); metricsGrid.add(card2);
+
+        RoundedPanel exportPanel = new RoundedPanel(20, PANEL_BG);
+        exportPanel.setLayout(new BorderLayout());
+        exportPanel.setBorder(new EmptyBorder(30, 30, 30, 30));
+
+        JLabel expTitle = new JLabel("<html><b>Export Daily Audit Report</b><br><font size='4' color='#94a3b8'>Download a CSV file of all transactions for administrative auditing.</font></html>");
+        expTitle.setForeground(Color.WHITE);
+        expTitle.setFont(new Font("Segoe UI", Font.PLAIN, 16));
+
+        StyledButton btnExport = new StyledButton("Export to CSV", ACCENT_GREEN);
+        btnExport.setPreferredSize(new Dimension(170, 50));
+        btnExport.addActionListener(e -> exportToCSV());
+
+        exportPanel.add(expTitle, BorderLayout.CENTER);
+        exportPanel.add(btnExport, BorderLayout.EAST);
+
+        JPanel centerLayout = new JPanel(new BorderLayout(0, 20));
+        centerLayout.setOpaque(false);
+        centerLayout.add(metricsGrid, BorderLayout.NORTH);
+        centerLayout.add(exportPanel, BorderLayout.CENTER);
+
+        panel.add(centerLayout, BorderLayout.CENTER);
+        return panel;
+    }
+
+    // refreshes the labels in the analytics tab when a new person is served
+    private void updateAnalyticsUI() {
+        lblTotalServed.setText(String.valueOf(totalServedToday));
+        if (totalServedToday > 0) {
+            long avgMillis = totalWaitTimeMillis / totalServedToday;
+            long mins = (avgMillis / 1000) / 60;
+            long secs = (avgMillis / 1000) % 60;
+            lblAvgWaitTime.setText(mins + "m " + secs + "s");
+        }
+    }
+
+    // dumps the history log into a nice excel csv file
+    private void exportToCSV() {
+        if (historyLog.isEmpty()) {
+            showToast("No data to export yet.", ADMIN_RED);
+            return;
+        }
+        try {
+            String date = dateFormat.format(new Date());
+            File file = new File("QueueCare_Report_" + date + ".csv");
+            PrintWriter pw = new PrintWriter(file);
+            pw.println("Timestamp,Category,Action");
+            for (String log : historyLog) {
+                String cleanLog = log.replace("[", "").replace("]", ",");
+                pw.println(cleanLog.replace(" called ", ",Called "));
+            }
+            pw.close();
+            showToast("Saved to: " + file.getAbsolutePath(), ACCENT_GREEN);
+        } catch (Exception ex) {
+            showToast("Export failed.", ADMIN_RED);
+        }
+    }
+
+    // builds the settings page (audio setup, media uploader, reset buttons)
+    private JPanel buildSettingsPanel() {
+        JPanel setPanel = new JPanel(new BorderLayout(0, 20));
+        setPanel.setOpaque(false);
+
+        JLabel header = new JLabel("System Configuration");
+        header.setFont(new Font("Segoe UI", Font.BOLD, 30));
+        header.setForeground(Color.WHITE);
+        setPanel.add(header, BorderLayout.NORTH);
+
+        RoundedPanel content = new RoundedPanel(20, PANEL_BG);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        content.setBorder(new EmptyBorder(30, 40, 30, 40));
+
+        content.add(createSectionTitle("Output Audio Device"));
+        audioDeviceDropdown = new JComboBox<>(getAudioDevices());
+        audioDeviceDropdown.setMaximumSize(new Dimension(800, 40));
+        audioDeviceDropdown.setAlignmentX(Component.LEFT_ALIGNMENT);
+        audioDeviceDropdown.setBackground(BG_MAIN);
+        audioDeviceDropdown.setForeground(Color.WHITE);
+        audioDeviceDropdown.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        audioDeviceDropdown.setUI(new ModernComboBoxUI());
+        audioDeviceDropdown.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+                JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                label.setBackground(isSelected ? new Color(56, 189, 248) : BG_MAIN);
+                label.setForeground(Color.WHITE);
+                label.setBorder(new EmptyBorder(8, 10, 8, 10));
+                return label;
+            }
+        });
+        content.add(audioDeviceDropdown);
+        content.add(Box.createRigidArea(new Dimension(0, 25)));
+
+        // file picker for the TV background
+        content.add(createSectionTitle("Public Display Media"));
+        JPanel mediaRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        mediaRow.setOpaque(false); mediaRow.setMaximumSize(new Dimension(800, 45));
+        mediaRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        StyledButton btnMedia = new StyledButton("Select Media", ACCENT_BLUE);
+        btnMedia.setPreferredSize(new Dimension(160, 40));
+        JLabel mediaLabel = new JLabel("  No media selected");
+        mediaLabel.setForeground(TEXT_MUTED); mediaLabel.setFont(new Font("Segoe UI", Font.ITALIC, 14));
+        btnMedia.addActionListener(e -> {
+            FileDialog chooser = new FileDialog(this, "Select Media", FileDialog.LOAD);
+            chooser.setFile("*.mp4;*.png;*.jpg;*.jpeg"); chooser.setVisible(true);
+            if (chooser.getFile() != null) {
+                mediaFilePath = chooser.getDirectory() + chooser.getFile();
+                mediaType = chooser.getFile().toLowerCase().endsWith(".mp4") ? "video" : "image";
+                mediaLabel.setText("  " + chooser.getFile()); mediaLabel.setForeground(ACCENT_GREEN);
+                showToast("Media updated!", ACCENT_GREEN);
+            }
+        });
+        mediaRow.add(btnMedia); mediaRow.add(mediaLabel);
+        content.add(mediaRow);
+        content.add(Box.createRigidArea(new Dimension(0, 25)));
+
+        content.add(createSectionTitle("Custom Call Sounds (.wav / .mp3)"));
+        content.add(createSoundRow("Payments:", "Payments"));
+        content.add(Box.createRigidArea(new Dimension(0, 12)));
+        content.add(createSoundRow("Registration:", "Registration"));
+        content.add(Box.createRigidArea(new Dimension(0, 12)));
+        content.add(createSoundRow("Consultation:", "Consultation"));
+
+        content.add(Box.createRigidArea(new Dimension(0, 35)));
+        content.add(createSectionTitle("Danger Zone: Reset Counters"));
+        JPanel resetRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        resetRow.setOpaque(false); resetRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JPanel resetWrapper = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 0));
+        resetWrapper.setOpaque(false);
+        resetWrapper.add(createResetButton("Reset Payments", "Payments"));
+        resetWrapper.add(createResetButton("Reset Registration", "Registration"));
+        resetWrapper.add(createResetButton("Reset Consultation", "Consultation"));
+        resetRow.add(resetWrapper);
+        content.add(resetRow);
+
+        setPanel.add(content, BorderLayout.CENTER);
+        return setPanel;
+    }
+
+    // helper to format the mini headings in settings
+    private JLabel createSectionTitle(String title) {
+        JLabel lbl = new JLabel(title); lbl.setFont(new Font("Segoe UI", Font.BOLD, 17));
+        lbl.setForeground(Color.WHITE); lbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        lbl.setBorder(new EmptyBorder(0, 0, 10, 0)); return lbl;
+    }
+
+    // helper to build the rows where user selects wav files for the announcer
+    private JPanel createSoundRow(String labelText, String categoryKey) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        row.setOpaque(false); row.setMaximumSize(new Dimension(800, 45)); row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel lblTarget = new JLabel(labelText); lblTarget.setPreferredSize(new Dimension(140, 30));
+        lblTarget.setForeground(Color.WHITE); lblTarget.setFont(new Font("Segoe UI", Font.BOLD, 15));
+        StyledButton btn = new StyledButton("Select Audio", new Color(71, 85, 105)); btn.setPreferredSize(new Dimension(140, 40));
+        JLabel lblSelected = new JLabel("  Default Voice"); lblSelected.setForeground(TEXT_MUTED); lblSelected.setFont(new Font("Segoe UI", Font.ITALIC, 14));
+        btn.addActionListener(e -> {
+            FileDialog chooser = new FileDialog(this, "Select Audio", FileDialog.LOAD);
+            chooser.setFile("*.wav;*.mp3"); chooser.setVisible(true);
+            if (chooser.getFile() != null) {
+                customSounds.put(categoryKey, chooser.getDirectory() + chooser.getFile());
+                lblSelected.setText("  " + chooser.getFile()); lblSelected.setForeground(ACCENT_GREEN);
+            }
+        });
+        row.add(lblTarget); row.add(btn); row.add(lblSelected); return row;
+    }
+
+    // helper to build the red danger buttons
+    private StyledButton createResetButton(String text, String category) {
+        StyledButton btn = new StyledButton(text, ADMIN_RED); btn.setPreferredSize(new Dimension(170, 40));
+        btn.addActionListener(e -> {
+            if (JOptionPane.showConfirmDialog(this, "Reset " + category + " to 001?", "Warning", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+                queues.get(category).clear();
+                counters.put(category, 1);
+                currentServing.put(category, "--");
+                categoryServedToday.put(category, 0);
+                categoryWaitTimeMillis.put(category, 0L);
+                saveCounterState(); // overwrite the txt file so it starts fresh
+                showToast(category + " Reset to 001", ADMIN_RED);
+            }
+        }); return btn;
+    }
+
+    // struct to hold audio output choices
+    class MixerItem {
+        Mixer.Info info; String name;
+        public MixerItem(Mixer.Info info, String name) { this.info = info; this.name = name; }
+        @Override public String toString() { return name; }
+    }
+
+    // scans the PC for speakers and headphones
+    private Vector<MixerItem> getAudioDevices() {
+        Vector<MixerItem> items = new Vector<>(); items.add(new MixerItem(null, "System Default Output"));
+        for (Mixer.Info m : AudioSystem.getMixerInfo()) {
+            if (AudioSystem.getMixer(m).getTargetLineInfo().length > 0) items.add(new MixerItem(m, m.getName()));
+        } return items;
+    }
+
+    // the logic that actually plays the "Ding!" or the custom wav file
+    private void playAnnouncement(String category, String ticket) {
+        MixerItem selectedDevice = (MixerItem) audioDeviceDropdown.getSelectedItem();
+        String customSoundPath = customSounds.get(category);
+        new Thread(() -> { // put in a thread so the UI doesn't freeze while audio plays
+            try {
+                if (customSoundPath != null && !customSoundPath.isEmpty() && new File(customSoundPath).exists()) {
+                    try {
+                        AudioInputStream ais = AudioSystem.getAudioInputStream(new File(customSoundPath));
+                        Clip clip = (selectedDevice.info != null) ? AudioSystem.getClip(selectedDevice.info) : AudioSystem.getClip();
+                        clip.open(ais); clip.start(); return;
+                    } catch (UnsupportedAudioFileException e) { SwingUtilities.invokeLater(() -> showToast("Java requires .wav format.", ADMIN_RED)); }
+                }
+                // fallback chime sound using raw sine wave
+                byte[] buf = new byte[8000]; for (int i = 0; i < buf.length; i++) buf[i] = (byte) (Math.sin(i / (8000.0 / 440) * 2.0 * Math.PI) * 127.0);
+                AudioFormat af = new AudioFormat(8000f, 8, 1, true, false);
+                SourceDataLine sdl = (selectedDevice.info != null) ? AudioSystem.getSourceDataLine(af, selectedDevice.info) : AudioSystem.getSourceDataLine(af);
+                sdl.open(af); sdl.start(); sdl.write(buf, 0, buf.length); sdl.drain(); sdl.close();
+                // trigger text to speech depending if on windows or mac
+                String os = System.getProperty("os.name").toLowerCase();
+                if (os.contains("win")) Runtime.getRuntime().exec(new String[]{"PowerShell", "-Command", "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('Ticket " + ticket + ", please proceed to " + category + "');"});
+                else if (os.contains("mac")) Runtime.getRuntime().exec(new String[]{"say", "Ticket " + ticket + ", please proceed to " + category});
+            } catch (Exception ex) { ex.printStackTrace(); }
+        }).start();
+    }
+
+    // Custom UI classes below just make java look nice instead of the default grey windows 98 look
+    class ModernComboBoxUI extends BasicComboBoxUI {
+        @Override protected JButton createArrowButton() {
+            JButton button = new JButton() {
+                @Override public void paint(Graphics g) {
+                    super.paint(g); Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(Color.WHITE); int[] xPoints = {getWidth()/2-5, getWidth()/2+5, getWidth()/2};
+                    int[] yPoints = {getHeight()/2-2, getHeight()/2-2, getHeight()/2+3};
+                    g2.fillPolygon(xPoints, yPoints, 3); g2.dispose();
+                }
+            };
+            button.setBorder(BorderFactory.createEmptyBorder()); button.setBackground(BG_MAIN);
+            button.setFocusPainted(false); button.setContentAreaFilled(false); return button;
+        }
+    }
+
+    class RoundedPanel extends JPanel {
+        private int r; private Color c;
+        public RoundedPanel(int radius, Color color) { this.r = radius; this.c = color; setOpaque(false); }
+        @Override protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g; g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(c); g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), r, r));
+        }
+    }
+
+    class StyledButton extends JButton {
+        private Color base;
+        public StyledButton(String text, Color color) {
+            super(text); this.base = color; setForeground(Color.WHITE); setFont(new Font("Segoe UI", Font.BOLD, 15));
+            setFocusPainted(false); setContentAreaFilled(false); setBorderPainted(false); setCursor(new Cursor(Cursor.HAND_CURSOR));
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent e) { if(isEnabled()){setBackground(base.darker()); repaint();} }
+                @Override public void mouseExited(MouseEvent e) { setBackground(base); repaint(); }
+            }); setBackground(base);
+        }
+        @Override protected void paintComponent(Graphics g) {
+            if(!isEnabled()) g.setColor(new Color(71, 85, 105)); else g.setColor(getBackground());
+            Graphics2D g2 = (Graphics2D) g; g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 10, 10)); super.paintComponent(g);
+        }
+    }
+
+    class SidebarButton extends JButton {
+        private boolean active;
+        public SidebarButton(String text, boolean initialActive) {
+            super(text); this.active = initialActive; setForeground(Color.WHITE); setFont(new Font("Segoe UI", Font.BOLD, 16));
+            setFocusPainted(false); setContentAreaFilled(false); setBorderPainted(false); setCursor(new Cursor(Cursor.HAND_CURSOR));
+            setPreferredSize(new Dimension(240, 50)); setHorizontalAlignment(SwingConstants.LEFT); setBorder(new EmptyBorder(0, 20, 0, 0));
+        }
+        public void setActive(boolean active) { this.active = active; repaint(); }
+        @Override protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g; g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            if (active) { g2.setColor(PANEL_BG); g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 12, 12)); } super.paintComponent(g);
+        }
+    }
+
+    // pop up notification function
+    private void showToast(String message, Color color) {
+        JDialog toast = new JDialog(this, false); toast.setUndecorated(true); toast.setBackground(new Color(0, 0, 0, 0));
+        RoundedPanel panel = new RoundedPanel(15, color); panel.setBorder(new EmptyBorder(15, 25, 15, 25));
+        JLabel label = new JLabel(message); label.setFont(new Font("Segoe UI", Font.BOLD, 15)); label.setForeground(Color.WHITE);
+        panel.add(label); toast.add(panel); toast.pack(); toast.setLocationRelativeTo(this);
+        toast.setLocation(toast.getLocation().x, toast.getLocation().y - 320); toast.setVisible(true);
+        Timer timer = new Timer(3000, e -> toast.dispose()); timer.setRepeats(false); timer.start();
+    }
+
+    // ========================================================================
+    // --- FILE READER HELPER & PATH FIXER ---
+    // ========================================================================
+
+    // NEW FIX: This makes sure the app ALWAYS finds the 'web' folder,
+    // whether running from IntelliJ or from a standalone .jar file
+    private static File getWebFolder() {
+        try {
+            // Figure out exactly where the code/jar is physically saved on the computer
+            File location = new File(QueueCare.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            if (location.isFile()) {
+                // If it's a file (a .jar), look in the folder holding the .jar
+                return new File(location.getParentFile(), "web");
+            } else {
+                // If we are in IntelliJ, just use the standard relative path
+                return new File("web");
+            }
+        } catch (Exception e) {
+            return new File("web"); // Emergency fallback
+        }
+    }
+
+    // grabs html files from our external "web" folder so we don't have messy strings in java
+    private static String readHtmlFile(String fileName) {
+        try {
+            File htmlFile = new File(getWebFolder(), fileName);
+            return Files.readString(htmlFile.toPath(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            System.err.println("CRITICAL ERROR: Could not read file: " + fileName);
+            return "<!DOCTYPE html><html><body style='background:#0f172a; color:white; font-family:sans-serif; text-align:center; padding-top:50px;'>" +
+                    "<h2>Error 404: File Not Found</h2>" +
+                    "<p>The server could not locate <b>web/" + fileName + "</b>.</p>" +
+                    "<p>Please ensure the 'web' folder is located next to your .jar file!</p></body></html>";
+        }
+    }
+
+    // ========================================================================
+    // --- LOCAL WEB SERVER ---
+    // ========================================================================
+    // spins up the http server so browsers on the local wifi can connect
+    public static void startWebServer() {
+        try {
+            HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+            server.createContext("/", new HtmlHandler()); // TV Display route
+            server.createContext("/portal", new PortalHtmlHandler()); // The main client site
+            server.createContext("/portfolio", new PortfolioHandler()); // dynamically injected dev portfolio
+            server.createContext("/assets", new AssetHandler()); // serves images from the web folder
+            server.createContext("/api/state", new ApiHandler()); // live data feed
+            server.createContext("/api/generate", new GenerateApiHandler()); // handles client ticket requests
+            server.createContext("/api/cancel", new CancelApiHandler()); // handles client cancel
+            server.createContext("/api/verify", new VerifyApiHandler()); // handles ticket recovery
+            server.createContext("/media", new MediaHandler()); // feeds the tv media file
+            server.setExecutor(null); server.start();
+        } catch (IOException e) { e.printStackTrace(); }
+    }
+
+    // --- ASSET HANDLER ---
+    // This allows the website to safely load your profile pictures from the web folder
+    static class AssetHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            String fileName = t.getRequestURI().getPath().replace("/assets/", "");
+            File imageFile = new File(getWebFolder(), fileName);
+
+            if (!imageFile.exists()) {
+                t.sendResponseHeaders(404, -1);
+                return;
+            }
+            t.sendResponseHeaders(200, imageFile.length());
+            try (OutputStream os = t.getResponseBody(); FileInputStream fis = new FileInputStream(imageFile)) {
+                byte[] buffer = new byte[64 * 1024]; int count;
+                while ((count = fis.read(buffer)) != -1) os.write(buffer, 0, count);
+            }
+        }
+    }
+
+    // --- PORTFOLIO API HANDLER ---
+    // takes the placeholder template, figures out who was clicked via URL, and injects their data
+    static class PortfolioHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            String query = t.getRequestURI().getQuery();
+            String user = "unknown";
+
+            if (query != null && query.startsWith("u=")) {
+                user = query.substring(2).toLowerCase();
+            }
+
+            // Default Placeholders in case someone types a random name in the url
+            String name = "Jane/John Doe";
+            String role = "Software Developer";
+            String image = "placeholder.jpg"; // the image filename it will look for
+            String about = "Passionate software developer with experience in creating robust and scalable applications. Looking to make an impact in the digital space.";
+            String[] skills = {"Software Engineering", "System Architecture", "Agile Methodologies", "Problem Solving"};
+            String email = "contact@placeholder.com";
+            String phone = "+63 900 000 0000";
+
+            // override data based on which dev card was clicked
+            switch (user) {
+                case "calimlim":
+                    name = "Spencer Kyle V. Calimlim";
+                    role = "Lead UX Designer / Full Stack Developer";
+                    image = "spencer.jpg";
+                    about = "I am a first-year BSIT student (Section BSIT1-05) specializing in modern user experience and interactive systems design. I type at an exceptional speed of 160 WPM and am fully fluent in English, Tagalog, and Pangasinense.";
+                    skills = new String[]{"UX Research & Wireframing", "Java Programming", "High-Speed Data Entry", "UI Systems Design"};
+                    email = "spencer.calimlim@queuecare.com";
+                    phone = "+63 917 123 4567";
+                    break;
+                case "coral":
+                    name = "Kian Coral";
+                    role = "UI Designer";
+                    image = "kian.jpg";
+                    about = "A dedicated UI designer passionate about creating visually stunning and accessible user interfaces that make software approachable and delightful.";
+                    skills = new String[]{"User Interface Design", "Color Theory", "Prototyping", "Responsive Web Design"};
+                    email = "kian.coral@queuecare.com";
+                    break;
+                case "gallardo":
+                    name = "Jesselyn Gallardo";
+                    role = "UX Researcher";
+                    image = "jesselyn.jpg";
+                    about = "Driven UX Researcher focused on understanding user pain points to build data-informed products that truly solve real-world problems.";
+                    skills = new String[]{"User Interviews", "Usability Testing", "Data Analysis", "Journey Mapping"};
+                    email = "jesselyn.gallardo@queuecare.com";
+                    break;
+                case "labayog":
+                    name = "Aldrin Jay Labayog";
+                    role = "Information Architect";
+                    image = "aldrin.jpg";
+                    about = "Detail-oriented Information Architect tasked with organizing complex data structures to make navigation intuitive and efficient for all users.";
+                    skills = new String[]{"Sitemapping", "Content Strategy", "Database Architecture", "System Flow Design"};
+                    email = "aldrin.labayog@queuecare.com";
+                    break;
+                case "maneclang":
+                    name = "Asia Maneclang";
+                    role = "Interaction Designer";
+                    image = "asia.jpg";
+                    about = "Creative Interaction Designer with a knack for breathing life into static screens through thoughtful micro-interactions and animations.";
+                    skills = new String[]{"Motion Graphics", "Frontend Animation", "Interactive Prototyping", "CSS Keyframing"};
+                    email = "asia.maneclang@queuecare.com";
+                    break;
+            }
+
+            // grabs the raw html file and replaces the bracket tags with our real data above
+            String htmlTemplate = readHtmlFile("portfolio.html");
+            String finalHtml = htmlTemplate
+                    .replace("{{NAME}}", name)
+                    .replace("{{ROLE}}", role)
+                    .replace("{{IMAGE}}", image)
+                    .replace("{{ABOUT}}", about)
+                    .replace("{{SKILL_1}}", skills[0])
+                    .replace("{{SKILL_2}}", skills[1])
+                    .replace("{{SKILL_3}}", skills[2])
+                    .replace("{{SKILL_4}}", skills[3])
+                    .replace("{{EMAIL}}", email)
+                    .replace("{{PHONE}}", phone);
+
+            byte[] bytes = finalHtml.getBytes(StandardCharsets.UTF_8);
+            t.sendResponseHeaders(200, bytes.length);
+            OutputStream os = t.getResponseBody(); os.write(bytes); os.close();
+        }
+    }
+
+    // --- SECURE TICKET VERIFICATION API ---
+    // handles when someone tries to recover a ticket. makes sure it actually exists and wasn't skipped
+    static class VerifyApiHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            String query = t.getRequestURI().getQuery();
+            String res = "{\"valid\": false, \"reason\": \"Invalid request format.\"}";
+
+            try {
+                if (query != null && query.startsWith("tkt=")) {
+                    String tkt = query.substring(4).split("&")[0].toUpperCase();
+                    if (tkt.contains("-")) {
+                        String[] parts = tkt.split("-");
+                        String prefix = parts[0];
+                        int num = Integer.parseInt(parts[1]);
+                        String cat = prefix.equals("P") ? "Payments" : prefix.equals("R") ? "Registration" : prefix.equals("C") ? "Consultation" : "";
+
+                        if (!cat.isEmpty()) {
+                            boolean isServing = tkt.equals(currentServing.get(cat));
+                            boolean isWaiting = queues.get(cat).contains(num);
+
+                            if (isServing || isWaiting) {
+                                res = "{\"valid\": true, \"cat\": \"" + cat + "\"}";
+                            } else {
+                                if (num >= counters.get(cat)) {
+                                    res = "{\"valid\": false, \"reason\": \"This ticket has not been generated yet.\"}";
+                                } else {
+                                    res = "{\"valid\": false, \"reason\": \"This ticket has already been served and is no longer valid.\"}";
+                                }
+                            }
+                        } else {
+                            res = "{\"valid\": false, \"reason\": \"Invalid department prefix.\"}";
+                        }
+                    }
+                }
+            } catch (Exception e) {}
+
+            byte[] bytes = res.getBytes(StandardCharsets.UTF_8);
+            t.getResponseHeaders().set("Content-Type", "application/json");
+            t.sendResponseHeaders(200, bytes.length);
+            OutputStream os = t.getResponseBody(); os.write(bytes); os.close();
+        }
+    }
+
+    // --- TICKET CANCELLATION API ---
+    // lets client drop out of line, removes their number from the background array
+    static class CancelApiHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            String query = t.getRequestURI().getQuery();
+            String res = "{\"status\": \"success\"}";
+            try {
+                if (query != null) {
+                    String[] params = query.split("&");
+                    String cat = "";
+                    int num = -1;
+                    for (String p : params) {
+                        if (p.startsWith("cat=")) cat = p.substring(4);
+                        if (p.startsWith("num=")) num = Integer.parseInt(p.substring(4));
+                    }
+                    if (!cat.isEmpty() && num != -1 && queues.containsKey(cat)) {
+                        queues.get(cat).remove(Integer.valueOf(num)); // drop from memory
+                    }
+                }
+            } catch (Exception e) {
+                res = "{\"error\": \"failed\"}";
+            }
+            byte[] bytes = res.getBytes(StandardCharsets.UTF_8);
+            t.getResponseHeaders().set("Content-Type", "application/json");
+            t.sendResponseHeaders(200, bytes.length);
+            OutputStream os = t.getResponseBody(); os.write(bytes); os.close();
+        }
+    }
+
+    // --- TICKET GENERATOR API ---
+    // when a browser clicks request ticket, this handles generating it while tracking their IP so they cant spam it
+    static class GenerateApiHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            String query = t.getRequestURI().getQuery();
+            String res = "{\"error\": \"Invalid\"}";
+            int code = 200;
+
+            String userIP = t.getRemoteAddress().getAddress().getHostAddress();
+            long currentTime = System.currentTimeMillis();
+
+            try {
+                if (ipCooldowns.containsKey(userIP) && (currentTime - ipCooldowns.get(userIP)) < 10000) {
+                    res = "{\"error\": \"Cooldown active. Please wait 10 seconds.\"}";
+                    code = 429;
+                } else if (query != null) {
+                    String[] params = query.split("&");
+                    String cat = "";
+                    for (String p : params) {
+                        if (p.startsWith("cat=")) cat = p.substring(4);
+                    }
+                    if (!cat.isEmpty() && queues.containsKey(cat)) {
+                        ipCooldowns.put(userIP, currentTime); // log ip so they cant request again immediately
+                        res = "{\"ticket\": \"" + generateNextTicket(cat) + "\"}";
+                    }
+                }
+            } catch (Exception e) {}
+
+            byte[] bytes = res.getBytes(StandardCharsets.UTF_8);
+            t.getResponseHeaders().set("Content-Type", "application/json");
+            t.sendResponseHeaders(code, bytes.length);
+            OutputStream os = t.getResponseBody(); os.write(bytes); os.close();
+        }
+    }
+
+    // --- CLIENT WEB PORTAL ROUTE ---
+    // handles serving the main client UI page
+    static class PortalHtmlHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            String html = readHtmlFile("portal.html");
+            byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
+            t.sendResponseHeaders(200, bytes.length);
+            OutputStream os = t.getResponseBody(); os.write(bytes); os.close();
+        }
+    }
+
+    // --- TV DISPLAY ROUTE ---
+    // handles serving the big dashboard you put on the TV monitor
+    static class HtmlHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            // Note: This HTML is kept inline because it dynamically injects the media string tags right into the body.
+            String mediaHtml = "<div class=\"media-placeholder\">[ Informational Video / Slideshow Area ]<br><br><span style=\"font-size: 1.2rem\">Please wait for your number to be called on the right.</span></div>";
+            if (mediaType.equals("video")) mediaHtml = "<video autoplay loop muted style=\"width:100%; height:100%; object-fit:cover;\" src=\"/media\"></video>";
+            else if (mediaType.equals("image")) mediaHtml = "<img src=\"/media\" style=\"width:100%; height:100%; object-fit:cover;\">";
+
+            String html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>QueueCare Public Display</title>\n<style>\n@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap');\n* { box-sizing: border-box; }\nbody { font-family: 'Inter', sans-serif; background: #0f172a; color: white; margin: 0; padding: 0; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }\nheader { background: #1e293b; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #38bdf8; box-shadow: 0 4px 15px rgba(0,0,0,0.5); z-index: 10; }\n.brand { font-size: 2.5rem; font-weight: 900; letter-spacing: 1px; color: #f8fafc; }\n.brand span { color: #38bdf8; }\n.clock { font-size: 2.5rem; font-weight: 700; color: #cbd5e1; }\nmain { display: flex; flex: 1; overflow: hidden; }\n.media-section { flex: 2; background: #000; position: relative; display: flex; justify-content: center; align-items: center; border-right: 2px solid #334155; overflow: hidden; }\n.media-placeholder { font-size: 2rem; color: #475569; text-align: center; padding: 40px; }\n.queue-section { flex: 1; background: #0f172a; padding: 30px; display: flex; flex-direction: column; gap: 20px; justify-content: center; }\n.card { background: #1e293b; border-radius: 20px; padding: 25px; text-align: center; border: 1px solid #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.3); transition: all 0.3s ease; }\n.title { font-size: 1.8rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }\n.serving { font-size: 6.5rem; font-weight: 900; color: #facc15; text-shadow: 0 4px 10px rgba(250, 204, 21, 0.3); line-height: 1.1; }\n.waiting { font-size: 1.4rem; color: #38bdf8; font-weight: 600; margin-top: 15px; background: rgba(56, 189, 248, 0.1); padding: 8px 20px; border-radius: 30px; display: inline-block; }\n.avg-wait { font-size: 1.1rem; color: #94a3b8; font-weight: 500; margin-top: 10px; background: rgba(0,0,0,0.2); padding: 5px 15px; border-radius: 20px; display: inline-block; border: 1px solid #334155; }\nfooter { background: #1e293b; height: 60px; border-top: 2px solid #334155; font-size: 1.8rem; font-weight: 600; color: #f8fafc; display: flex; align-items: center; overflow: hidden; }\nmarquee { width: 100%; line-height: 60px; margin: 0; padding: 0; }\n@keyframes pulseAttention { 0% { transform: scale(1); color: #facc15; } 50% { transform: scale(1.15); color: #fff; text-shadow: 0 0 30px #facc15; } 100% { transform: scale(1); color: #facc15; } }\n.flash-anim { animation: pulseAttention 1s cubic-bezier(0.4, 0, 0.2, 1) 3; }\n</style>\n</head>\n<body>\n<header>\n<div class=\"brand\">Queue<span>Care</span></div>\n<div class=\"clock\" id=\"clock\">00:00:00</div>\n</header>\n<main>\n<div class=\"media-section\">\n" + mediaHtml + "\n</div>\n<div class=\"queue-section\">\n<div class=\"card\"><div class=\"title\">Payments</div><div class=\"serving\" id=\"s-Payments\">--</div><div class=\"waiting\" id=\"w-Payments\">Waiting: 0</div><br><div class=\"avg-wait\" id=\"avg-Payments\">Avg Wait: 0m 0s</div></div>\n<div class=\"card\"><div class=\"title\">Registration</div><div class=\"serving\" id=\"s-Registration\">--</div><div class=\"waiting\" id=\"w-Registration\">Waiting: 0</div><br><div class=\"avg-wait\" id=\"avg-Registration\">Avg Wait: 0m 0s</div></div>\n<div class=\"card\"><div class=\"title\">Consultation</div><div class=\"serving\" id=\"s-Consultation\">--</div><div class=\"waiting\" id=\"w-Consultation\">Waiting: 0</div><br><div class=\"avg-wait\" id=\"avg-Consultation\">Avg Wait: 0m 0s</div></div>\n</div>\n</main>\n<footer>\n<marquee scrollamount=\"8\">Welcome to our facility. Please prepare your ID and necessary documents while waiting. || System Developed by: Calimlim, Coral, Gallardo, Labayog, Maneclang.</marquee>\n</footer>\n<script>\nfunction updateClock() { document.getElementById('clock').innerText = new Date().toLocaleTimeString('en-US'); }\nsetInterval(updateClock, 1000); updateClock();\nlet previousState = {};\nasync function updateQueue() { try { let res = await fetch('/api/state'); let data = await res.json(); ['Payments', 'Registration', 'Consultation'].forEach(c => { let servingEl = document.getElementById('s-'+c); if (previousState[c] && previousState[c] !== data[c].serving && data[c].serving !== '--') { servingEl.classList.remove('flash-anim'); void servingEl.offsetWidth; servingEl.classList.add('flash-anim'); } servingEl.innerText = data[c].serving; document.getElementById('w-'+c).innerText = 'Waiting: ' + data[c].waiting; document.getElementById('avg-'+c).innerText = 'Avg Wait: ' + data[c].avgWait; previousState[c] = data[c].serving; }); } catch(e) {} }\nsetInterval(updateQueue, 1000); updateQueue();\n</script>\n</body>\n</html>";
+
+            byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
+            t.sendResponseHeaders(200, bytes.length);
+            OutputStream os = t.getResponseBody(); os.write(bytes); os.close();
+        }
+    }
+
+    // --- LIVE FEED API ---
+    // broadcasts the active serving numbers to all the connected web clients as JSON
+    static class ApiHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            StringBuilder json = new StringBuilder("{"); String[] cats = {"Payments", "Registration", "Consultation"};
+            for (int i = 0; i < cats.length; i++) {
+                String c = cats[i];
+
+                long served = categoryServedToday.getOrDefault(c, 0);
+                long waitMillis = categoryWaitTimeMillis.getOrDefault(c, 0L);
+                String avgStr = "0m 0s";
+                if (served > 0) {
+                    long avg = waitMillis / served;
+                    avgStr = (avg/1000/60) + "m " + (avg/1000%60) + "s";
+                }
+
+                json.append("\"").append(c).append("\":{")
+                        .append("\"serving\":\"").append(currentServing.get(c)).append("\",")
+                        .append("\"waiting\":").append(queues.get(c).size()).append(",")
+                        .append("\"avgWait\":\"").append(avgStr).append("\"")
+                        .append("}");
+                if (i < cats.length - 1) json.append(",");
+            }
+            json.append("}");
+
+            byte[] bytes = json.toString().getBytes(StandardCharsets.UTF_8);
+            t.getResponseHeaders().set("Content-Type", "application/json");
+            t.sendResponseHeaders(200, bytes.length);
+            OutputStream os = t.getResponseBody(); os.write(bytes); os.close();
+        }
+    }
+
+    // --- MEDIA SERVER ---
+    // reads the video/image selected in settings and feeds it to the TV display html
+    static class MediaHandler implements HttpHandler {
+        @Override public void handle(HttpExchange t) throws IOException {
+            if (mediaFilePath == null || mediaFilePath.isEmpty() || !new File(mediaFilePath).exists()) { t.sendResponseHeaders(404, -1); return; }
+            File file = new File(mediaFilePath); t.sendResponseHeaders(200, file.length());
+            try (OutputStream os = t.getResponseBody(); FileInputStream fis = new FileInputStream(file)) {
+                // read the file in chunks so it doesn't crash RAM on big videos
+                byte[] buffer = new byte[64 * 1024]; int count; while ((count = fis.read(buffer)) != -1) os.write(buffer, 0, count);
+            }
+        }
+    }
+
+    // main entrypoint. kicks off the local server thread and boots the UI
+    public static void main(String[] args) {
+        startWebServer(); SwingUtilities.invokeLater(() -> new QueueCare().setVisible(true));
+    }
+}

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QueueCare - Client Portal</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap');
+
+    body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; margin: 0; padding: 0; }
+    header { background: #1e293b; padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #38bdf8; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+    .brand { font-size: 2rem; font-weight: 900; letter-spacing: 1px; color: #f8fafc; margin: 0; }
+    .brand span { color: #38bdf8; }
+    .header-right { display: flex; align-items: center; gap: 20px; }
+    .portal-title { font-size: 1rem; color: #cbd5e1; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; display: none; }
+
+    @media (min-width: 600px) { .portal-title { display: block; } }
+
+    .nav-btn { background: #38bdf8; color: #0f172a; border: none; padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    .nav-btn:hover { background: #7dd3fc; }
+
+    .main-layout { display: flex; flex-direction: column; gap: 25px; padding: 30px 20px; max-width: 1200px; margin: 0 auto; }
+    .col-left { flex: 1.5; display: flex; flex-direction: column; gap: 20px; }
+    .col-right { flex: 1; }
+
+    @media (min-width: 850px) { .main-layout { flex-direction: row; padding: 40px; } }
+
+    .view-hidden { display: none !important; }
+    .card { background: #1e293b; border-radius: 20px; padding: 30px; border: 1px solid #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.3); text-align: center; }
+    .card-title { font-size: 1.5rem; color: #f8fafc; font-weight: 700; margin-top: 0; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; padding-bottom: 15px; }
+
+    /* Request Panel */
+    .warning-text { color: #facc15; font-size: 1rem; background: rgba(250, 204, 21, 0.1); padding: 20px; border-radius: 12px; border: 1px solid rgba(250, 204, 21, 0.3); text-align: left; line-height: 1.5; margin-bottom: 25px; }
+    .btn { display: block; width: 100%; margin: 15px 0; padding: 20px; border-radius: 12px; border: none; font-size: 1.2rem; font-weight: bold; color: white; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: transform 0.2s, filter 0.2s; font-family: 'Inter', sans-serif; }
+    .btn:hover { filter: brightness(1.1); }
+    .btn:active { transform: scale(0.98); }
+    .btn-P { background: linear-gradient(135deg, #10b981, #059669); }
+    .btn-R { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .btn-C { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+    .btn-cancel { background: linear-gradient(135deg, #ef4444, #b91c1c); margin-top: 30px; padding: 15px; font-size: 1.1rem; }
+
+    /* Ticket Display */
+    #myCatDisplay { color: #94a3b8; font-size: 1.2rem; text-transform: uppercase; font-weight: bold; letter-spacing: 2px; }
+    .ticket-num { font-size: 5.5rem; font-weight: 900; color: #facc15; margin: 10px 0; text-shadow: 0 4px 15px rgba(250,204,21,0.3); line-height: 1; }
+
+    @media (min-width: 850px) { .ticket-num { font-size: 7rem; } }
+
+    @keyframes flash { 0%{opacity:1;} 50%{opacity:0.3;} 100%{opacity:1;} }
+    .turn-alert { display: none; color: #10b981; font-weight: 900; font-size: 1.8rem; margin: 20px 0; animation: flash 1s infinite; text-transform: uppercase; line-height: 1.3; }
+    .near-alert { display: none; color: #f97316; font-weight: bold; font-size: 1.2rem; margin: 20px 0; background: rgba(249, 115, 22, 0.1); padding: 20px; border-radius: 12px; border: 1px solid rgba(249, 115, 22, 0.3); }
+    .countdown { font-size: 3rem; color: #ef4444; font-weight: 900; display: block; margin-top: 10px; }
+    #waitText { color: #38bdf8; font-size: 1.2rem; font-weight: bold; padding: 20px 0; }
+
+    /* Live Status Box */
+    .status-row { display: flex; justify-content: space-between; align-items: center; margin: 15px 0; border-bottom: 1px solid #334155; padding-bottom: 15px; font-size: 1.1rem; }
+    .status-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+    .cat-name { font-weight: 600; color: #cbd5e1; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+    .cat-serve { font-size: 1.8rem; font-weight: 900; }
+    .s-p { color: #10b981; } .s-r { color: #f59e0b; } .s-c { color: #3b82f6; }
+    .waiting-badge { font-size: 0.85rem; background: rgba(255,255,255,0.1); padding: 4px 10px; border-radius: 20px; color: #94a3b8; font-weight: bold; }
+
+    /* Modal */
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.9); z-index: 1000; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box; }
+    .modal-box { background: #1e293b; padding: 40px; border-radius: 20px; border: 2px solid #ef4444; max-width: 500px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    .modal-box h2 { color: #ef4444; margin-top: 0; font-size: 2rem; font-weight: 900; text-transform: uppercase; }
+    .modal-box p { color: #e2e8f0; font-size: 1.1rem; line-height: 1.6; margin-bottom: 30px; }
+    .modal-btn { background: #ef4444; color: white; border: none; padding: 15px 30px; border-radius: 10px; font-size: 1.2rem; font-weight: bold; cursor: pointer; width: 100%; transition: background 0.2s; }
+    .modal-btn:hover { background: #dc2626; }
+
+    /* About Us Specific Styles */
+    .about-container { display: flex; flex-direction: column; gap: 30px; width: 100%; }
+    .contact-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 30px; margin-top: 20px; }
+    .contact-item { display: flex; align-items: center; gap: 10px; color: #cbd5e1; text-decoration: none; font-size: 1.1rem; font-weight: 500; background: #334155; padding: 15px 25px; border-radius: 30px; transition: 0.2s; }
+    .contact-item:hover { background: #475569; color: #fff; transform: translateY(-3px); }
+    .team-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 25px; margin-top: 20px; }
+    .team-card { background: #334155; padding: 25px 20px; border-radius: 15px; width: 220px; text-decoration: none; color: white; transition: 0.2s; border: 2px solid transparent; cursor: pointer; }
+    .team-card:hover { transform: translateY(-5px); border-color: #38bdf8; background: #1e293b; box-shadow: 0 10px 20px rgba(0,0,0,0.4); }
+    .avatar { width: 70px; height: 70px; border-radius: 50%; background: #38bdf8; color: #0f172a; display: flex; justify-content: center; align-items: center; font-size: 2rem; font-weight: 900; margin: 0 auto 15px auto; }
+    .team-card h3 { margin: 0 0 5px 0; font-size: 1.2rem; }
+    .team-card p { margin: 0; color: #94a3b8; font-size: 0.9rem; }
+
+    /* Recovery Input */
+    .recovery-section { margin-top: 30px; padding-top: 20px; border-top: 1px solid #334155; }
+    .recovery-section p { color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px; text-align: left; }
+    .recovery-flex { display: flex; gap: 10px; }
+    .recovery-input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: white; text-transform: uppercase; font-weight: bold; }
+    .recovery-btn { background: #38bdf8; color: #0f172a; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    .recovery-btn:hover { background: #7dd3fc; }
+  </style>
+</head>
+<body>
+
+<div id="skipModal" class="modal-overlay">
+  <div class="modal-box">
+    <h2>Turn Missed</h2>
+    <p>Since you did not proceed to the counter, your ticket has been skipped. You will need to generate a new ticket to be served.</p>
+    <button class="modal-btn" onclick="closeSkipModal()">Understood</button>
+  </div>
+</div>
+
+<header>
+  <div class="brand">Queue<span>Care</span></div>
+  <div class="header-right">
+    <div class="portal-title">Client Web Portal</div>
+    <button class="nav-btn" id="btnToggleView" onclick="toggleView()">About Us</button>
+  </div>
+</header>
+
+
+<div id="mainDashboard" class="main-layout">
+  <div class="col-left">
+    <div id="requestContainer" class="card">
+      <h2 class="card-title">Select Service</h2>
+      <div class="warning-text"><b>Important:</b> You may only request ONE ticket at a time. You must wait to be served before requesting a ticket for another department.</div>
+      <button class="btn btn-P" onclick="requestTicket('Payments')">Request Payment Ticket</button>
+      <button class="btn btn-R" onclick="requestTicket('Registration')">Request Registration Ticket</button>
+      <button class="btn btn-C" onclick="requestTicket('Consultation')">Request Consultation Ticket</button>
+
+      <div class="recovery-section">
+        <p>Accidentally closed the app? Restore your ticket:</p>
+        <div class="recovery-flex">
+          <input type="text" id="recoverInput" class="recovery-input" placeholder="e.g., P-005">
+          <button onclick="recoverTicket()" class="recovery-btn">Recover</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="ticketBox" class="card my-ticket" style="display: none;">
+      <div id="myCatDisplay"></div>
+      <div class="ticket-num" id="myTicketNumber">--</div>
+      <div class="near-alert" id="nearAlert"></div>
+      <div class="turn-alert" id="turnAlert">IT IS YOUR TURN!<br>PLEASE PROCEED TO THE COUNTER.<span class="countdown" id="countdown">60s</span></div>
+      <div id="waitText">Please wait for your number to be called.</div>
+      <button class="btn btn-cancel" onclick="cancelTicket()">Cancel My Ticket</button>
+    </div>
+  </div>
+
+  <div class="col-right">
+    <div class="card status-box">
+      <h2 class="card-title">Live Status</h2>
+      <div class="status-row">
+        <div class="cat-name">Payments <span class="waiting-badge">Waiting: <span id="w-Payments">0</span></span></div>
+        <div class="cat-serve s-p" id="s-Payments">--</div>
+      </div>
+      <div class="status-row">
+        <div class="cat-name">Registration <span class="waiting-badge">Waiting: <span id="w-Registration">0</span></span></div>
+        <div class="cat-serve s-r" id="s-Registration">--</div>
+      </div>
+      <div class="status-row">
+        <div class="cat-name">Consultation <span class="waiting-badge">Waiting: <span id="w-Consultation">0</span></span></div>
+        <div class="cat-serve s-c" id="s-Consultation">--</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div id="aboutDashboard" class="main-layout view-hidden">
+  <div class="about-container">
+    <div class="card">
+      <h2 class="card-title">Contact Us</h2>
+      <div class="contact-row">
+        <a href="tel:placeholder" class="contact-item">📞 +63 900 000 0000</a>
+        <a href="mailto:placeholder@email.com" class="contact-item">📧 email@placeholder.com</a>
+        <a href="#instagram" class="contact-item">📷 @queuecare_ig</a>
+      </div>
+    </div>
+    <div class="card">
+      <h2 class="card-title">Meet the Developers</h2>
+      <div class="team-grid">
+        <a href="/portfolio?u=calimlim" class="team-card">
+          <div class="avatar">SC</div>
+          <h3>Spencer Calimlim</h3>
+          <p>Lead UX Designer</p>
+        </a>
+        <a href="/portfolio?u=coral" class="team-card">
+          <div class="avatar">KC</div>
+          <h3>Kian Coral</h3>
+          <p>UI Designer</p>
+        </a>
+        <a href="/portfolio?u=gallardo" class="team-card">
+          <div class="avatar">JG</div>
+          <h3>Jesselyn Gallardo</h3>
+          <p>UX Researcher</p>
+        </a>
+        <a href="/portfolio?u=labayog" class="team-card">
+          <div class="avatar">AL</div>
+          <h3>Aldrin Jay Labayog</h3>
+          <p>Information Architect</p>
+        </a>
+        <a href="/portfolio?u=maneclang" class="team-card">
+          <div class="avatar">AM</div>
+          <h3>Asia Maneclang</h3>
+          <p>Interaction Designer</p>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let turnTimer = null;
+  let countdownValue = 60;
+  let showingAbout = false;
+
+  function toggleView() {
+    showingAbout = !showingAbout;
+    if (showingAbout) {
+        document.getElementById('mainDashboard').classList.add('view-hidden');
+        document.getElementById('aboutDashboard').classList.remove('view-hidden');
+        document.getElementById('btnToggleView').innerText = 'Back to Portal';
+    } else {
+        document.getElementById('aboutDashboard').classList.add('view-hidden');
+        document.getElementById('mainDashboard').classList.remove('view-hidden');
+        document.getElementById('btnToggleView').innerText = 'About Us';
+    }
+  }
+
+  function getTicketNum(ticketStr) {
+    if (!ticketStr || ticketStr === '--') return 0;
+    let parts = ticketStr.split('-');
+    return parts.length === 2 ? parseInt(parts[1], 10) : 0;
+  }
+
+  function checkLocalTicket() {
+    let tkt = localStorage.getItem('myTicket');
+    let cat = localStorage.getItem('myCat');
+    if (tkt && cat) {
+      document.getElementById('requestContainer').style.display = 'none';
+      document.getElementById('ticketBox').style.display = 'block';
+      document.getElementById('myTicketNumber').innerText = tkt;
+      document.getElementById('myCatDisplay').innerText = cat;
+    } else {
+      document.getElementById('requestContainer').style.display = 'block';
+      document.getElementById('ticketBox').style.display = 'none';
+      document.getElementById('turnAlert').style.display = 'none';
+      document.getElementById('nearAlert').style.display = 'none';
+      document.getElementById('waitText').style.display = 'block';
+    }
+  }
+
+  function clearMyTicket() {
+    if (turnTimer) { clearInterval(turnTimer); turnTimer = null; }
+    localStorage.removeItem('myTicket');
+    localStorage.removeItem('myCat');
+  }
+
+  function closeSkipModal() {
+    document.getElementById('skipModal').style.display = 'none';
+    checkLocalTicket();
+  }
+
+  async function recoverTicket() {
+    let val = document.getElementById('recoverInput').value.toUpperCase().trim();
+    if (!val.includes('-')) {
+        alert("Invalid format. Please use format like P-001, R-005, or C-012.");
+        return;
+    }
+    try {
+        let res = await fetch('/api/verify?tkt=' + val + '&_t=' + new Date().getTime());
+        let data = await res.json();
+        if (data.valid) {
+            localStorage.setItem('myTicket', val);
+            localStorage.setItem('myCat', data.cat);
+            checkLocalTicket();
+            updateStatus();
+            alert("Ticket recovered successfully!");
+        } else {
+            alert(data.reason || "Invalid ticket number.");
+        }
+    } catch (e) {
+        alert('Error connecting to server to verify ticket.');
+    }
+  }
+
+  async function requestTicket(cat) {
+    try {
+      let res = await fetch('/api/generate?cat=' + cat + '&_t=' + new Date().getTime());
+      if (res.status === 429) { alert("Please wait a few seconds before requesting again."); return; }
+      let data = await res.json();
+      if (data.ticket) {
+          localStorage.setItem('myTicket', data.ticket);
+          localStorage.setItem('myCat', cat);
+          checkLocalTicket();
+          updateStatus();
+      }
+    } catch (e) { alert('Error connecting to server.'); }
+  }
+
+  async function cancelTicket() {
+    let confirmCancel = confirm("Are you sure you want to cancel this ticket? If you request a new one, you will go to the back of the line.");
+    if (!confirmCancel) return;
+    let tkt = localStorage.getItem('myTicket');
+    let cat = localStorage.getItem('myCat');
+    if (tkt && cat) {
+      let num = parseInt(tkt.split('-')[1], 10);
+      await fetch('/api/cancel?cat=' + cat + '&num=' + num + '&_t=' + new Date().getTime());
+    }
+    clearMyTicket();
+    checkLocalTicket();
+  }
+
+  async function updateStatus() {
+    try {
+      let res = await fetch('/api/state?_t=' + new Date().getTime());
+      let data = await res.json();
+      ['Payments', 'Registration', 'Consultation'].forEach(c => {
+        if(data[c]) {
+            document.getElementById('s-'+c).innerText = data[c].serving;
+            document.getElementById('w-'+c).innerText = data[c].waiting;
+        }
+      });
+
+      let myTkt = localStorage.getItem('myTicket');
+      let myCat = localStorage.getItem('myCat');
+
+      if (myTkt && myCat && data[myCat]) {
+        let myNum = getTicketNum(myTkt);
+        let servingNum = getTicketNum(data[myCat].serving);
+
+        if (servingNum === 0) {
+           document.getElementById('turnAlert').style.display = 'none';
+           document.getElementById('nearAlert').style.display = 'none';
+           document.getElementById('waitText').style.display = 'block';
+        } else if (servingNum === myNum) {
+           document.getElementById('nearAlert').style.display = 'none';
+           document.getElementById('waitText').style.display = 'none';
+           document.getElementById('turnAlert').style.display = 'block';
+           if (!turnTimer) {
+               countdownValue = 60;
+               document.getElementById('countdown').innerText = countdownValue + 's';
+               turnTimer = setInterval(() => {
+                   countdownValue--;
+                   document.getElementById('countdown').innerText = countdownValue + 's';
+                   if (countdownValue <= 0) {
+                       clearMyTicket();
+                       if(!showingAbout) document.getElementById('skipModal').style.display = 'flex';
+                   }
+               }, 1000);
+           }
+        } else if (servingNum > myNum) {
+           clearMyTicket();
+           if(!showingAbout) document.getElementById('skipModal').style.display = 'flex';
+        } else if ((myNum - servingNum) <= 5) {
+           if (turnTimer) { clearInterval(turnTimer); turnTimer = null; }
+           let ahead = myNum - servingNum;
+           document.getElementById('nearAlert').innerHTML = "<b>GET READY!</b><br>Only " + ahead + " person(s) ahead of you.";
+           document.getElementById('nearAlert').style.display = 'block';
+           document.getElementById('turnAlert').style.display = 'none';
+           document.getElementById('waitText').style.display = 'none';
+        } else {
+           if (turnTimer) { clearInterval(turnTimer); turnTimer = null; }
+           document.getElementById('nearAlert').style.display = 'none';
+           document.getElementById('turnAlert').style.display = 'none';
+           document.getElementById('waitText').style.display = 'block';
+        }
+      }
+    } catch(e) {}
+  }
+
+  checkLocalTicket();
+  setInterval(updateStatus, 1500); updateStatus();
+</script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{NAME}} | Portfolio</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap');
+    :root { --bg: #0f172a; --card-bg: rgba(30, 41, 59, 0.7); --accent: #38bdf8; --text-main: #f8fafc; --text-muted: #94a3b8; }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text-main); margin: 0; padding: 0; overflow-x: hidden; min-height: 100vh; background-image: radial-gradient(circle at top right, #1e293b 0%, #0f172a 50%); }
+
+    /* Smooth Page Transitions */
+    #main-wrapper { animation: pageEnter 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+    @keyframes pageEnter { from { opacity: 0; transform: translateY(15px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    .page-exit { animation: pageExit 0.4s ease forwards !important; }
+    @keyframes pageExit { to { opacity: 0; transform: translateY(-10px) scale(0.98); } }
+
+    /* Glass Header */
+    header { background: rgba(30, 41, 59, 0.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); position: sticky; top: 0; z-index: 100; }
+    .back-btn { background: rgba(255,255,255,0.05); color: white; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1); transition: all 0.3s ease; }
+    .back-btn:hover { background: var(--accent); color: #000; border-color: var(--accent); transform: translateX(-3px); }
+
+    .container { max-width: 800px; margin: 0 auto; padding: 60px 20px; }
+
+    /* Hero Section & Image Logic */
+    .hero { text-align: center; margin-bottom: 70px; }
+    .profile-wrapper { position: relative; width: 140px; height: 140px; margin: 0 auto 25px auto; }
+    .profile-wrapper::after { content: ''; position: absolute; top: -8px; left: -8px; right: -8px; bottom: -8px; border-radius: 50%; border: 2px dashed rgba(56, 189, 248, 0.5); animation: spin 15s linear infinite; z-index: 0; }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    .pic-profile { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 4px solid var(--bg); box-shadow: 0 15px 35px rgba(56, 189, 248, 0.4); position: relative; z-index: 1; background: #334155; }
+
+    .hero h1 { font-size: 3rem; margin: 0 0 10px 0; font-weight: 900; letter-spacing: -1px; }
+    .hero h3 { font-size: 1.1rem; margin: 0; color: var(--accent); text-transform: uppercase; letter-spacing: 3px; font-weight: 700; }
+
+    /* Glass Cards */
+    .section { background: var(--card-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 24px; padding: 40px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.05); box-shadow: 0 20px 40px rgba(0,0,0,0.2); opacity: 0; transform: translateY(20px); transition: all 0.6s cubic-bezier(0.2, 0.8, 0.2, 1); }
+    .section.visible { opacity: 1; transform: translateY(0); }
+    .section-title { font-size: 1.5rem; color: #fff; font-weight: 800; display: flex; align-items: center; gap: 15px; margin-top: 0; margin-bottom: 25px; }
+    .section-title::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(255,255,255,0.1), transparent); }
+    .about-text { font-size: 1.1rem; line-height: 1.8; color: var(--text-muted); margin: 0; }
+
+    /* Flexible Pill Layout for Skills */
+    .skills-container { display: flex; flex-wrap: wrap; gap: 12px; }
+    .skill-pill { background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); color: var(--accent); padding: 12px 24px; border-radius: 50px; font-weight: 600; font-size: 0.95rem; display: inline-flex; transition: all 0.3s ease; }
+    .skill-pill:hover { background: rgba(56, 189, 248, 0.2); transform: translateY(-3px); box-shadow: 0 10px 20px rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4); }
+
+    /* Projects Hover Effect */
+    .projects-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+    @media(min-width: 650px) { .projects-grid { grid-template-columns: 1fr 1fr; } }
+    .project-card { background: rgba(15, 23, 42, 0.6); border-radius: 16px; padding: 25px; border: 1px solid rgba(255,255,255,0.05); transition: all 0.4s ease; cursor: default; }
+    .project-card:hover { transform: translateY(-5px); background: rgba(30, 41, 59, 0.9); border-color: rgba(56,189,248,0.3); box-shadow: 0 15px 30px rgba(0,0,0,0.3); }
+    .project-card h4 { margin: 0 0 10px 0; font-size: 1.2rem; color: #fff; }
+    .project-card p { color: var(--text-muted); line-height: 1.6; font-size: 0.95rem; margin: 0 0 15px 0; }
+    .tech-tag { display: inline-block; background: rgba(255,255,255,0.05); color: #cbd5e1; font-size: 0.8rem; padding: 6px 12px; border-radius: 6px; margin-right: 6px; font-weight: 500; }
+
+    /* Contacts */
+    .contact-flex { display: flex; flex-direction: column; gap: 15px; }
+    @media(min-width: 600px) { .contact-flex { flex-direction: row; } }
+    .contact-link { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); padding: 16px; border-radius: 14px; text-decoration: none; color: white; font-weight: 600; flex: 1; justify-content: center; border: 1px solid rgba(255,255,255,0.05); transition: all 0.3s; }
+    .contact-link:hover { background: #fff; color: #000; transform: translateY(-3px); box-shadow: 0 10px 20px rgba(255,255,255,0.1); }
+  </style>
+</head>
+<body>
+<div id="main-wrapper">
+  <header>
+    <div style="font-size: 1.1rem; font-weight: 800; letter-spacing: 1px;">Queue<span style="color:#38bdf8">Care</span> Network</div>
+    <a href="/portal" class="back-btn" id="backBtn">← Back to Portal</a>
+  </header>
+
+  <div class="container">
+    <div class="hero">
+      <div class="profile-wrapper">
+        <img src="/assets/{{IMAGE}}" alt="{{NAME}}" class="pic-profile">
+      </div>
+      <h1>{{NAME}}</h1>
+      <h3>{{ROLE}}</h3>
+    </div>
+
+    <div class="section scroll-anim" style="transition-delay: 0.1s">
+      <h2 class="section-title">About Me</h2>
+      <p class="about-text">{{ABOUT}}</p>
+    </div>
+
+    <div class="section scroll-anim" style="transition-delay: 0.2s">
+      <h2 class="section-title">Core Skills</h2>
+      <div class="skills-container">
+        <div class="skill-pill">{{SKILL_1}}</div>
+        <div class="skill-pill">{{SKILL_2}}</div>
+        <div class="skill-pill">{{SKILL_3}}</div>
+        <div class="skill-pill">{{SKILL_4}}</div>
+      </div>
+    </div>
+
+    <div class="section scroll-anim" style="transition-delay: 0.3s">
+      <h2 class="section-title">Selected Works</h2>
+      <div class="projects-grid">
+        <div class="project-card">
+          <h4>QueueCare Management System</h4>
+          <p>A digital queuing and service dashboard designed to reduce wait times and streamline operations using local networking.</p>
+          <span class="tech-tag">Java</span> <span class="tech-tag">HTML/JS</span>
+        </div>
+        <div class="project-card">
+          <h4>Project Placeholder</h4>
+          <p>A scalable, responsive web application focused on delivering seamless user experiences. Built with modern UI frameworks.</p>
+          <span class="tech-tag">Frontend</span> <span class="tech-tag">Design</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section scroll-anim" style="transition-delay: 0.4s">
+      <h2 class="section-title">Get In Touch</h2>
+      <div class="contact-flex">
+        <a href="mailto:{{EMAIL}}" class="contact-link">📧 Email Me</a>
+        <a href="tel:{{PHONE}}" class="contact-link">📞 Call Me</a>
+        <a href="#" class="contact-link">🔗 LinkedIn</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Smooth Exit Animation Logic
+  document.getElementById('backBtn').addEventListener('click', function(e) {
+      e.preventDefault();
+      let href = this.href;
+      document.getElementById('main-wrapper').classList.add('page-exit');
+      setTimeout(() => { window.location.href = href; }, 350);
+  });
+
+  // Intersection Observer for scroll animations
+  const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+          if (entry.isIntersecting) {
+              entry.target.classList.add('visible');
+          }
+      });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.scroll-anim').forEach((el) => {
+      observer.observe(el);
+  });
+</script>
+</body>
+</html>
